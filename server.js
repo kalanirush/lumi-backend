@@ -123,9 +123,9 @@ app.post('/analyze', async (req, res) => {
     "priceTarget": "$XXX"
   },
   "news": [
-    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral"},
-    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral"},
-    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral"}
+    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral", "url": "https://... or null"},
+    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral", "url": "https://... or null"},
+    {"headline": "...", "source": "...", "tone": "positive" or "negative" or "neutral", "url": "https://... or null"}
   ],
   "risks": ["Risk 1 in one sentence", "Risk 2 in one sentence", "Risk 3 in one sentence"]
 }`;
