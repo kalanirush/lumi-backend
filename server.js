@@ -76,8 +76,8 @@ app.get('/usage/:userId', (req, res) => {
 app.post('/analyze', async (req, res) => {
   const { ticker, userId } = req.body;
 
-  if (!ticker || !/^[A-Z.\-]{1,10}$/i.test(ticker)) {
-    return res.status(400).json({ error: 'Invalid ticker symbol' });
+  if (!ticker || ticker.length < 1 || ticker.length > 50) {
+    return res.status(400).json({ error: 'Invalid ticker or company name' });
   }
 
   if (!userId) {
@@ -89,9 +89,9 @@ app.post('/analyze', async (req, res) => {
   }
 
   const record = incrementUsage(userId);
-  console.log(`[Lumi] Analyzing ${ticker.toUpperCase()} for user ${userId.slice(0, 8)}... (${record.count} this month)`);
+  console.log(`[Lumi] Analyzing "${ticker}" for user ${userId.slice(0, 8)}... (${record.count} this month)`);
 
-  const prompt = `Analyze stock ticker: ${ticker.toUpperCase()}. Search for current price, P/E ratio, market cap, 52-week range, revenue growth, EPS, analyst consensus (% buy/hold/sell), avg price target, and 3 recent news headlines from the last 2 weeks. Respond ONLY with this exact JSON, no markdown, no extra text:
+  const prompt = `The user wants to analyze this stock: "${ticker}". First identify the correct stock ticker symbol if a company name was provided (e.g. "Apple" = AAPL, "Tesla" = TSLA). Then search for current price, P/E ratio, market cap, 52-week range, revenue growth, EPS, analyst consensus (% buy/hold/sell), avg price target, and 3 recent news headlines from the last 2 weeks. Respond ONLY with this exact JSON, no markdown, no extra text:
 {"sentiment":"Bullish or Bearish or Neutral","confidence":"High or Medium or Low","outlook":"2-3 sentence plain English summary for a beginner investor","metrics":[{"label":"Price","value":"$XXX"},{"label":"P/E Ratio","value":"XX.X"},{"label":"Market Cap","value":"$XXXb"},{"label":"52W Range","value":"$XX-$XXX"},{"label":"Rev Growth","value":"+XX%"},{"label":"EPS","value":"$X.XX"}],"analysts":{"buy":0,"hold":0,"sell":0,"priceTarget":"$XXX"},"news":[{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"},{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"},{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"}],"risks":["...","...","..."]}`;
 
   try {
