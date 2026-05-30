@@ -91,8 +91,16 @@ app.post('/analyze', async (req, res) => {
   const record = incrementUsage(userId);
   console.log(`[Mila] Analyzing "${ticker}" for user ${userId.slice(0, 8)}... (${record.count} this month)`);
  
-  const prompt = `The user wants to analyze this stock: "${ticker}". First identify the correct stock ticker symbol if a company name was provided (e.g. "Apple" = AAPL, "Tesla" = TSLA). Then search for current price, P/E ratio, market cap, 52-week range, revenue growth, EPS, analyst consensus (% buy/hold/sell), avg price target, and 3 recent news headlines from the last 2 weeks. Respond ONLY with this exact JSON, no markdown, no extra text:
-{"sentiment":"Bullish or Bearish or Neutral","confidence":"High or Medium or Low","outlook":"2-3 sentence plain English summary for a beginner investor","metrics":[{"label":"Price","value":"$XXX"},{"label":"P/E Ratio","value":"XX.X"},{"label":"Market Cap","value":"$XXXb"},{"label":"52W Range","value":"$XX-$XXX"},{"label":"Rev Growth","value":"+XX%"},{"label":"EPS","value":"$X.XX"}],"analysts":{"buy":0,"hold":0,"sell":0,"priceTarget":"$XXX"},"news":[{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"},{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"},{"headline":"...","source":"...","tone":"positive or negative or neutral","url":"https://... or null"}],"risks":["...","...","..."]}`;
+  const prompt = `You are a stock analysis API. The user wants to analyze: "${ticker}".
+ 
+STEP 1: If this is a company name, identify the ticker (Apple=AAPL, Tesla=TSLA, Microsoft=MSFT etc).
+STEP 2: Search for current price, P/E ratio, market cap, 52-week range, revenue growth YoY, EPS, analyst buy/hold/sell percentages (must add up to 100), avg price target, and 3 recent news headlines.
+STEP 3: Return ONLY a valid JSON object. No introduction. No explanation. No markdown. No backticks. Just the raw JSON.
+ 
+The JSON must follow this exact structure:
+{"sentiment":"Bullish","confidence":"High","outlook":"2-3 sentences for a beginner investor","metrics":[{"label":"Price","value":"$XXX"},{"label":"P/E Ratio","value":"XX.X"},{"label":"Market Cap","value":"$XXXb"},{"label":"52W Range","value":"$XX-$XXX"},{"label":"Rev Growth","value":"+XX%"},{"label":"EPS","value":"$X.XX"}],"analysts":{"buy":78,"hold":18,"sell":4,"priceTarget":"$XXX"},"news":[{"headline":"...","source":"...","tone":"positive","url":"https://..."},{"headline":"...","source":"...","tone":"negative","url":null},{"headline":"...","source":"...","tone":"neutral","url":"https://..."}],"risks":["Risk 1","Risk 2","Risk 3"]}
+ 
+IMPORTANT: analyst buy+hold+sell must equal exactly 100. Return ONLY the JSON, nothing else.`;
  
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -141,3 +149,4 @@ app.post('/analyze', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✦ Mila backend running on port ${PORT}`);
 });
+ 
