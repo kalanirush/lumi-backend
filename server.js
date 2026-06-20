@@ -8,7 +8,6 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Trust Railway's proxy
 app.set('trust proxy', 1);
 
 app.use(express.json());
@@ -51,8 +50,58 @@ function incrementUsage(userId) {
   return record;
 }
 
+async function resolveTicker(query) {
+  const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
+  if (/^[A-Z]{1,5}$/.test(query.trim())) return query.trim().toUpperCase();
+  try {
+    const res = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${FINNHUB_KEY}`);
+    const data = await res.json();
+    if (data.result && data.result.length > 0) {
+      const us = data.result.find(r => r.type === 'Common Stock' && !r.symbol.includes('.'));
+      return us ? us.symbol : data.result[0].symbol;
+    }
+  } catch (e) {
+    console.error('[Mila] Ticker resolve error:', e);
+  }
+  return query.trim().toUpperCase();
+}
+
+async function getStockData(ticker) {
+  const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
+  try {
+    const [quoteRes, profileRes, metricsRes] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_KEY}`),
+      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${FINNHUB_KEY}`),
+      fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${FINNHUB_KEY}`)
+    ]);
+    const [quote, profile, metrics] = await Promise.all([
+      quoteRes.json(), profileRes.json(), metricsRes.json()
+    ]);
+    const m = metrics.metric || {};
+    const price = quote.c || null;
+    const high52 = m['52WeekHigh'] || null;
+    const low52 = m['52WeekLow'] || null;
+    const marketCap = profile.marketCapitalization ? (profile.marketCapitalization / 1000).toFixed(2) : null;
+    const pe = m.peNormalizedAnnual || m.peTTM || null;
+    const eps = m.epsTTM || null;
+    const revGrowth = m.revenueGrowthTTMYoy ? (m.revenueGrowthTTMYoy * 100).toFixed(1) : null;
+    return {
+      price: price ? `$${price.toFixed(2)}` : null,
+      peRatio: pe ? pe.toFixed(1) : null,
+      marketCap: marketCap ? `$${marketCap}b` : null,
+      weekRange52: high52 && low52 ? `$${low52.toFixed(2)}-$${high52.toFixed(2)}` : null,
+      revGrowth: revGrowth ? `${revGrowth > 0 ? '+' : ''}${revGrowth}%` : null,
+      eps: eps ? `$${eps.toFixed(2)}` : null,
+      companyName: profile.name || ticker
+    };
+  } catch (e) {
+    console.error('[Mila] Finnhub error:', e);
+    return null;
+  }
+}
+
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'Mila API', version: '1.0.0' });
+  res.json({ status: 'ok', service: 'Mila API', version: '1.1.0' });
 });
 
 app.post('/register', (req, res) => {
@@ -79,35 +128,46 @@ app.post('/analyze', async (req, res) => {
   if (!ticker || ticker.length < 1 || ticker.length > 50) {
     return res.status(400).json({ error: 'Invalid ticker or company name' });
   }
-
   if (!userId) {
     return res.status(400).json({ error: 'Missing userId. Please reinstall Mila.' });
   }
-
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: 'Server configuration error. Contact support.' });
   }
 
   const record = incrementUsage(userId);
-  console.log(`[Mila] Analyzing "${ticker}" for user ${userId.slice(0, 8)}... (${record.count} this month)`);
+  const resolvedTicker = await resolveTicker(ticker);
+  console.log(`[Mila] Analyzing ${resolvedTicker} for user ${userId.slice(0, 8)}... (${record.count} this month)`);
 
-  const prompt = `You are a stock analysis API. The user wants to analyze: "${ticker}".
+  const stockData = await getStockData(resolvedTicker);
 
-STEP 1: If this is a company name, identify the correct stock ticker symbol (Apple=AAPL, Tesla=TSLA, Microsoft=MSFT etc).
-STEP 2: Search the web RIGHT NOW for the most current data:
-- Current real-time or most recent market price (search "[ticker] stock price today")
-- P/E ratio, market cap, 52-week high and low
-- Revenue growth YoY and EPS from most recent earnings
-- Analyst buy/hold/sell ratings and average price target (must add up to 100%)
-- 3 most recent news headlines from the last 7 days with their actual URLs
-STEP 3: Return ONLY a valid JSON object. No introduction. No explanation. No markdown. No backticks. Just raw JSON.
+  const metricsContext = stockData
+    ? `Here are the REAL verified metrics for ${resolvedTicker} from a live data source — use these exact values:
+- Company: ${stockData.companyName}
+- Current Price: ${stockData.price || 'N/A'}
+- P/E Ratio: ${stockData.peRatio || 'N/A'}
+- Market Cap: ${stockData.marketCap || 'N/A'}
+- 52-Week Range: ${stockData.weekRange52 || 'N/A'}
+- Revenue Growth YoY: ${stockData.revGrowth || 'N/A'}
+- EPS: ${stockData.eps || 'N/A'}`
+    : `Use web search to find current data for ${resolvedTicker}.`;
 
-Be honest and accurate. Use the actual real-time price from your search — do not estimate or use outdated data. If the stock is struggling, say Bearish. If mixed, say Neutral. Do not default to Bullish. Include both positive and negative news where they exist.
+  const prompt = `You are a stock analysis API for ${resolvedTicker}.
 
-The JSON must follow this exact structure:
-{"sentiment":"Bullish or Bearish or Neutral based on actual data","confidence":"High or Medium or Low","outlook":"2-3 honest plain English sentences covering both positives and concerns","metrics":[{"label":"Price","value":"$XXX.XX"},{"label":"P/E Ratio","value":"XX.X"},{"label":"Market Cap","value":"$XXXb"},{"label":"52W Range","value":"$XX-$XXX"},{"label":"Rev Growth","value":"+XX%"},{"label":"EPS","value":"$X.XX"}],"analysts":{"buy":0,"hold":0,"sell":0,"priceTarget":"$XXX"},"news":[{"headline":"actual headline text","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"},{"headline":"actual headline text","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"},{"headline":"actual headline text","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"}],"risks":["Specific risk 1","Specific risk 2","Specific risk 3"]}
+${metricsContext}
 
-CRITICAL: Use the real current price from your web search. analyst buy+hold+sell must equal exactly 100. News URLs must be real working links. Return ONLY the JSON.`;
+Search the web for:
+- Analyst buy/hold/sell ratings and average price target
+- 3 most recent news headlines from the last 7 days with real URLs
+- Overall investment sentiment
+
+Return ONLY valid raw JSON. No intro, no explanation, no markdown, no backticks.
+
+Be honest — say Bearish if struggling, Neutral if mixed, do not default to Bullish.
+
+{"sentiment":"Bullish or Bearish or Neutral","confidence":"High or Medium or Low","outlook":"2-3 honest plain English sentences covering both positives and concerns","metrics":[{"label":"Price","value":"${stockData?.price || 'N/A'}"},{"label":"P/E Ratio","value":"${stockData?.peRatio || 'N/A'}"},{"label":"Market Cap","value":"${stockData?.marketCap || 'N/A'}"},{"label":"52W Range","value":"${stockData?.weekRange52 || 'N/A'}"},{"label":"Rev Growth","value":"${stockData?.revGrowth || 'N/A'}"},{"label":"EPS","value":"${stockData?.eps || 'N/A'}"}],"analysts":{"buy":0,"hold":0,"sell":0,"priceTarget":"$XXX"},"news":[{"headline":"actual headline","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"},{"headline":"actual headline","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"},{"headline":"actual headline","source":"Source Name","tone":"positive or negative or neutral","url":"https://actual-url.com"}],"risks":["Risk 1","Risk 2","Risk 3"]}
+
+analyst buy+hold+sell must equal exactly 100. Return ONLY the JSON.`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -145,7 +205,7 @@ CRITICAL: Use the real current price from your web search. analyst buy+hold+sell
     }
 
     const analysis = JSON.parse(raw.slice(start, end + 1));
-    res.json({ success: true, ticker: ticker.toUpperCase(), analysis });
+    res.json({ success: true, ticker: resolvedTicker, analysis });
 
   } catch (err) {
     console.error('[Mila] Server error:', err);
